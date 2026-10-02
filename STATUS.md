@@ -1,13 +1,23 @@
 # STATUS — shanshui-bg
-_Last touched: 2026-10-02_
+_Last touched: 2026-10-03_
 
 ## Goal
 A slowly scrolling {Shan, Shui}* landscape (Lingdong Huang, MIT) that can be used as
 (a) a **moving KDE Plasma wallpaper** and (b) a **website background**, sharing one core.
 
 ## State of play
-Folder created. The original is vendored unmodified in `upstream/` (pinned commit `9f754d2`). No code
-written yet. Credit policy written in `CREDITS.md`.
+Original vendored unmodified in `upstream/` (pinned `9f754d2`); credit policy in `CREDITS.md`.
+- `core/shanshui.js`: generator extracted as `createWorld(seed)` → `{load, render, prune,
+  upstreamRender, mem}`. Verbatim upstream code; edits listed in its header (local Math shadow,
+  world-scoped implicit globals `vtxlist0/vtxlist1/vtxlist/reso/MEM`, btoa, console.log removed).
+  Runs in strict mode over 60k px for 5 seeds; generation ≈ 100 ms per 1000 px.
+- `test/upstream-ref.mjs`: unmodified upstream scripts run in a Node vm sandbox (DOM stubbed) as the
+  reference. `test/diff-upstream.test.mjs`: byte-identical objects/views for 5 seeds × 3 scroll
+  sequences, PRNG still in lockstep. **All 15 pass (2026-10-03, ~75 s)**; negative control (seed 42 vs
+  43) is caught.
+- Run tests with `systemd-run --user --scope -q -p MemoryMax=3G -p MemorySwapMax=0 npm test`
+  (an OOM-killed child takes the whole Claude session down on this machine; happened twice; cause was
+  a cross-realm `assert.deepEqual`, which always fails and then diffs MBs of SVG).
 
 ## Decided strategy
 - **Render once, slide the bitmap.** Generating SVG live is the costly part. Scrolling an already-rendered
@@ -27,10 +37,33 @@ written yet. Credit policy written in `CREDITS.md`.
 - **Credit generously** beyond MIT's requirement (see `CREDITS.md`).
 - Working mode: **accept-edits**. "Is the seam seamless, is it smooth" can only be judged by eye.
 
+## Upstream findings (read 2026-10-02)
+- Generator is pure string-building. The only DOM/global ties: `window.btoa` in `Prng.hash`,
+  `Math.random` overridden globally by `Prng`, the global `MEM`, and the paper texture (`#bgcanv`,
+  512² noise, tiled; the SVG sits on top with `mix-blend-mode:multiply`).
+- **Not deterministic per x.** One global PRNG stream (the Perlin table is seeded from it too), so
+  chunk N depends on every chunk generated before it. Generating forward-only from a seed IS
+  deterministic. Consequence: no jumping to arbitrary x. Restart = replay or new seed.
+- Upstream "chunks" are objects (mountain/boat/…) with an anchor (x,y), planned in 512-px strips by
+  `mountplanner`. Drawings spill well past the anchor (distMount len up to 1500). A view = all objects
+  near the window concatenated, sorted by y. **So seams don't arise if tiles are cut from one shared
+  object list** with a margin ≥ widest object. `renderChunk(seed,x0,x1)` → stateful
+  `ensure(x1)` / `svg(x0,x1)` / `prune(x0)`.
+- Upstream never frees `MEM.chunks` / `MEM.planmtx`; we must prune.
+- World height fixed at 800 units (viewBox zoom 1.142).
+- **A 3000-px view is ~22 MB of SVG text.** Rasterisation cost per tile is the open performance risk.
+- **Measured object extents** (5 seeds × 30k px): distMount reaches 1510 px right of its anchor,
+  others ≤ ~500 px either side. Upstream's 512-px render margin can drop visible distMounts. Tiles
+  need margin ≈ 1600, and generation must have run to ≈ x1 + 1300 before rasterising a tile ending
+  at x1 (later strips can place flatMounts up to ~1200 px left of their start).
+- **Verification hook:** same seed + same generation order → our module should emit the same SVG
+  string as upstream. Diff test for the extraction.
+- Machine: Plasma 5.27.12, X11, `qml-module-qtwebengine` 5.15 installed, so a wallpaper plugin
+  can host a WebEngineView running the web front end (one code path; costs a Chromium process).
+
 ## Open questions / next
-- [ ] Read upstream `index.html`: how chunks are generated, whether a chunk is deterministic given
-      seed + x (needed for seamless continuation), and which globals to untangle.
-- [ ] Extract `renderChunk` and check that two adjacent chunks join without a seam.
+- [x] Extract generator into a module with its own PRNG; diff-test against upstream for fixed seeds.
+- [ ] Measure SVG-string → bitmap time per screen-wide tile (decides worker/pre-render strategy).
 - [ ] Scroller + a minimal test page.
 - [ ] KDE: check whether a Plasma wallpaper plugin can host a web view running the core directly, or
       whether it should scroll tiles pre-rendered headless. Wayland vs X11 still unconfirmed.
