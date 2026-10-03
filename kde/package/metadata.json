@@ -1,0 +1,14 @@
+{
+    "KPackageStructure": "Plasma/Wallpaper",
+    "KPlugin": {
+        "Authors": [
+            { "Name": "Chris Foulon" },
+            { "Name": "Lingdong Huang ({Shan, Shui}* generator)" }
+        ],
+        "Description": "A slowly scrolling, endless {Shan, Shui}* landscape",
+        "Id": "org.shanshui.wallpaper",
+        "License": "MIT",
+        "Name": "Shan Shui",
+        "Version": "0.1"
+    }
+}

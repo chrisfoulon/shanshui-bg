@@ -31,7 +31,9 @@ export const UPSTREAM_STYLE = { ink: null, inkStrength: 1, paper: null, grain: 1
 export function startScroller(container, opts = {}) {
   const seed = opts.seed ?? String(Math.floor(Math.random() * 1e9));
   const speed = opts.speed ?? DEFAULTS.speed;
-  const ahead = opts.ahead ?? 2; // screens rendered beyond the right edge
+  // screens rendered beyond the right edge; a tile builds in < 1 s and one screen lasts W / speed
+  // (96 s at 20 px/s), so one is plenty, and each extra screen held costs a full tile of memory
+  const ahead = opts.ahead ?? 1;
   const onStat = opts.onStat || (() => {});
   const still =
     opts.still ?? window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -70,7 +72,10 @@ export function startScroller(container, opts = {}) {
   container.appendChild(strip);
   let driftAnim = null;
 
-  const worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
+  // workerUrl: a classic-script worker (the file:// bundle, kde/build.mjs); default the module worker
+  const worker = opts.workerUrl
+    ? new Worker(opts.workerUrl)
+    : new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
   worker.postMessage({ seed });
   // Style, applied once per tile when it is drawn (no scrolling cost). UPSTREAM_STYLE reproduces upstream.
   //   ink: CSS colour the black of the drawing turns into (null = upstream grey ink, untouched)
@@ -132,53 +137,59 @@ export function startScroller(container, opts = {}) {
     // into the final canvas, so its edges blur against real neighbouring content, not transparency.
     const mD = 2 * soften, m = mD / rd; // each pass spreads one device px
     const t = performance.now();
-    const res = await askWorker({
+    let res = await askWorker({
       x0: wx - m / scale, x1: wx + (W + OVERLAP + m) / scale, w: cw + 2 * mD, h: ch,
     });
     const url = URL.createObjectURL(new Blob([res.bytes], { type: "image/svg+xml" }));
+    const stat = { workerMs: Math.round(res.ms), mb: +(res.bytes.length / 1e6).toFixed(1) };
+    const workerMs = res.ms;
+    res = null; // the Blob holds the SVG now; let the 14–20 MB of bytes go
     const img = new Image();
     img.src = url;
     await img.decode();
     const t1 = performance.now();
     const compose = (c) => {
       const ctx = c.getContext("2d");
-      ctx.save();
-      ctx.scale(rd, rd);
-      ctx.translate(-(px - m), 0); // paper pattern is anchored to layout x, so it runs on across tiles
-      ctx.fillStyle = paper;
-      ctx.fillRect(px - m, 0, W + OVERLAP + 2 * m, HT + 2 * m);
-      ctx.restore();
-      ctx.globalCompositeOperation = "multiply";
+      const fillPaper = () => {
+        ctx.save();
+        ctx.scale(rd, rd);
+        ctx.translate(-(px - m), 0); // paper pattern is anchored to layout x, so it runs on across tiles
+        ctx.fillStyle = paper;
+        ctx.fillRect(px - m, 0, W + OVERLAP + 2 * m, HT + 2 * m);
+        ctx.restore();
+      };
       if (ink == null && inkStrength == 1) {
+        fillPaper();
+        ctx.globalCompositeOperation = "multiply";
         ctx.drawImage(img, 0, mD); // upstream look: the drawing multiplied straight onto the paper
       } else {
-        // Ink layer: the drawing on white (multiplying that is the same as multiplying the drawing),
-        // recoloured with "screen" (black -> ink colour, white stays white), lightened with white.
-        const L = document.createElement("canvas");
-        L.width = c.width;
-        L.height = c.height;
-        const l = L.getContext("2d");
-        l.fillStyle = "#fff";
-        l.fillRect(0, 0, L.width, L.height);
-        l.drawImage(img, 0, mD);
+        // Ink layer, built in the tile itself: the drawing on white (multiplying that is the same as
+        // multiplying the drawing), recoloured with "screen" (black -> ink colour, white stays
+        // white), lightened with white or darkened by multiplying it with itself, partly. The paper
+        // is multiplied in last: multiply commutes, so this equals multiplying the layer onto the
+        // paper, without a second full-size canvas.
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(img, 0, mD);
         if (ink != null) {
-          l.globalCompositeOperation = "screen";
-          l.fillStyle = ink;
-          l.fillRect(0, 0, L.width, L.height);
+          ctx.globalCompositeOperation = "screen";
+          ctx.fillStyle = ink;
+          ctx.fillRect(0, 0, c.width, c.height);
         }
         if (inkStrength < 1) {
-          l.globalCompositeOperation = "source-over";
-          l.globalAlpha = 1 - inkStrength;
-          l.fillStyle = "#fff";
-          l.fillRect(0, 0, L.width, L.height);
-        }
-        ctx.drawImage(L, 0, 0);
-        if (inkStrength > 1) { // multiply again, partly: darker ink
-          ctx.globalAlpha = Math.min(1, inkStrength - 1);
-          ctx.drawImage(L, 0, 0);
+          ctx.globalCompositeOperation = "source-over";
+          ctx.globalAlpha = 1 - inkStrength;
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(0, 0, c.width, c.height);
           ctx.globalAlpha = 1;
         }
-        L.width = L.height = 0;
+        ctx.globalCompositeOperation = "multiply";
+        if (inkStrength > 1) { // L × ((1 - a) + a × L): darker ink
+          ctx.globalAlpha = Math.min(1, inkStrength - 1);
+          ctx.drawImage(c, 0, 0);
+          ctx.globalAlpha = 1;
+        }
+        fillPaper();
       }
       if (night) {
         ctx.globalCompositeOperation = "difference";
@@ -220,10 +231,12 @@ export function startScroller(container, opts = {}) {
       pass(src, canvas, -mD);
       src.width = src.height = 0;
     }
+    // drop the image (an SVG image keeps its whole parsed document alive) and its source now
+    img.removeAttribute("src");
     URL.revokeObjectURL(url);
     onStat({
-      tile: Math.round(px / W), workerMs: Math.round(res.ms), mb: +(res.bytes.length / 1e6).toFixed(1),
-      decodeMs: Math.round(t1 - t - res.ms), drawMs: Math.round(performance.now() - t1),
+      tile: Math.round(px / W), ...stat,
+      decodeMs: Math.round(t1 - t - workerMs), drawMs: Math.round(performance.now() - t1),
     });
     if (gen != generation || stopped) return;
     mount(canvas, px);

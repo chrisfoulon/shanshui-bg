@@ -1,5 +1,5 @@
 # STATUS — shanshui-bg
-_Last touched: 2026-10-03_
+_Last touched: 2026-10-04_
 
 ## Goal
 A slowly scrolling {Shan, Shui}* landscape (Lingdong Huang, MIT) that can be used as
@@ -125,8 +125,8 @@ Original vendored unmodified in `upstream/` (pinned `9f754d2`); credit policy in
   60 Hz, which is too fast here.
 - New scroller options: `fps` (step rate), `subpixel`, `soften` (N horizontal [¼ ½ ¼] passes),
   `supersample`, `zoom` (tiles zoom× screen height, so screen speed can rise at the same landscape
-  pace and strokes are thicker), and `drift` (compositor vertical pan over the extra height,
-  alternate, ease-in-out).
+  pace and strokes are thicker), and `drift` (compositor vertical pan over the extra height; see
+  below).
 - Demo has a **settings panel** (P / ⚙) with presets; all settings are URL params. serve.mjs now
   sends `cache-control: no-store`.
 - [x] By eye (Chris): **zoom 1.5 @ 20 px/s is much smoother**, so these are now the scroller and demo
@@ -137,7 +137,7 @@ Original vendored unmodified in `upstream/` (pinned `9f754d2`); credit policy in
   "glide to a random height" version was not what Chris meant.
 - "Pizza Hut" signs (an upstream Easter egg on 1 in 3 one-storey pagoda roofs; the generator's only
   `<text>`) are stripped in `core/tiles.js`. The generator stays verbatim; tested.
-- [ ] Remeasure CPU/memory (`bench/cpu.sh`) at the new defaults (zoom 1.5 raises raster area 1.5×).
+- [x] Remeasured at the new defaults, in the wallpaper itself (see wallpaper memory below).
 - Style options (applied per tile at draw time):
   - `ink`: "screen" recolours black to the ink colour.
   - `inkStrength`: white wash below 1, a second partial multiply above 1.
@@ -152,14 +152,35 @@ Original vendored unmodified in `upstream/` (pinned `9f754d2`); credit policy in
       look. Seed stays random. The bare demo URL renders pixel-identical to Chris's settings link.
 - [ ] Object-level changes (no boats, etc.) and composition edits (needs generator changes behind
       switches) are still possible next steps.
-- [ ] **Judge live by eye** (Chrome and Firefox): does the scroll stay smooth while a tile builds, are
-      joins invisible? Without a read-back, drawImage measured only 35–55 ms, so the raster is
-      deferred to paint time, and where that cost lands is unknown. If it hitches: half-screen tiles,
-      or force the raster during idle time.
-- [ ] Measure inside QtWebEngine 5.15 (the KDE host) once the test page exists.
-- [ ] KDE: check whether a Plasma wallpaper plugin can host a web view running the core directly, or
-      whether it should scroll tiles pre-rendered headless. Session is X11 (Plasma 5.27.12, one
-      1920×1080 screen). A no-WebEngine option: a helper renders PNG tiles ahead (Node + an SVG
-      rasteriser) and QML only scrolls images.
+- [x] **KDE wallpaper works and is in use (2026-10-03, Chris: "seems to work great").**
+  - `kde/package` (id `org.shanshui.wallpaper`): QML `WebEngineView` (QtWebEngine 1.10) loads
+    `shanshui.html`; `enabled: false` so clicks reach the desktop. Settings = one text field: paste a
+    demo link (its query is passed to the page); empty = DEFAULTS.
+  - `kde/build.mjs` bundles the core into one classic-script page (file:// refuses ES modules and
+    module workers); the worker runs from a Blob of its source via the new `opts.workerUrl`. The bundle
+    renders pixel-identical to the demo. `kde/install.sh` builds + installs (kpackagetool5, per user).
+  - Undo: pick "Image" as wallpaper type. Lock screen could use the same plugin (Screen Locking →
+    Appearance); untested, the greeter's sandbox may block the web view.
+- **Wallpaper memory, `bench/wallpaper-mem.sh [min] [label]`** (reinstalls, reloads the wallpaper,
+  samples the renderer's PSS + CPU every 5 s). Two changes, 15-min runs back to back (2026-10-04):
+  renderer mean **486 MB (392–722) → 261 MB (229–303)**; CPU unchanged (renderer 2%, plasmashell 7%).
+  - `ahead` 2 → 1 screen (a build takes < 1 s; one screen = 96 s at 20 px/s).
+  - Each build's leftovers released at once (`img.removeAttribute("src")`, SVG bytes dropped), and the
+    ink layer built in the tile itself (paper multiplied last; multiply commutes) instead of a second
+    canvas. Pixels: upstream look identical, other styles ≤ 2/255 (rounding).
+  - **6-min runs are useless for this:** memory steps at every tile build (±50–100 MB) and the old
+    version climbed over time; only the 15-min comparison separated the two.
+  - Chromium windows used ~1.1–1.7 GB each in the side-by-side test, but that is a whole browser;
+    the wallpaper itself is the renderer above (+ ~30 MB of helpers, + its GPU textures in plasmashell).
+- **Prior art (searched 2026-10-03):** ~a dozen ports appeared 27 Sep – 2 Oct 2026. Closest:
+  theonthai45/endless-shan-shui (browser; same design: compositor scroll + tiles ahead; more terrain
+  options). Measured side by side at 45 px/s: theirs 15–20% CPU steady, ours 10–12% + spikes at tile
+  builds. EldinBegano/shan-shui-wallpaper (Rust, Wayland layer-shell, not X11). No native Plasma
+  wallpaper plugin found. Chris's verdict on smoothness vs theirs: not given yet.
+- [ ] Decide what to publish: own repo (not a fork/PR; upstream dormant since 2018), README for
+      outsiders with the recording (`~/2026-10-03 22-38-08-10s.mp4`, 1.2 MB), positioned mainly as a
+      KDE Plasma wallpaper. Commit `kde/`, the memory changes and `bench/wallpaper-mem.sh` first.
+- [ ] Plasma 6 port (Qt 6 imports) if publishing for current KDE users.
+- [ ] Optional: pause when a maximised window covers the desktop (TasksModel + WebEngineView
+      lifecycleState Frozen). Half-screen tiles would halve per-build peaks further.
 - [ ] Web component + optional credit link.
-- [ ] Alternative kept in reserve: a pre-rendered seamless video loop (hardware decode, very cheap).

@@ -1,0 +1,52 @@
+<!doctype html>
+<!-- Wallpaper page. kde/build.mjs inlines the core here, so it runs from file:// (no modules). -->
+<!-- Settings: the same URL params as the demo (a link copied from the demo panel works as is). -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>shanshui wallpaper</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  #bg { position: fixed; inset: 0; }
+</style>
+</head>
+<body>
+<div id="bg"></div>
+<script>
+/*WORKER*/
+</script>
+<script>
+/*MAIN*/
+</script>
+<script>
+  const q = new URLSearchParams(location.search);
+  const num = (k) => (q.has(k) ? +q.get(k) : undefined);
+  const flag = (k) => (q.has(k) ? q.get(k) == "1" : undefined);
+  const str = (k) => (q.has(k) ? q.get(k) : undefined);
+  const opts = {
+    seed: str("seed"),
+    speed: num("speed"),
+    still: flag("still"),
+    motion: str("motion"),
+    fps: num("fps"),
+    subpixel: flag("subpixel"),
+    soften: num("soften"),
+    supersample: num("ss"),
+    zoom: num("zoom"),
+    drift: num("drift"),
+    turn: num("turn"),
+    ink: str("ink") == "#000000" ? null : str("ink"),
+    inkStrength: num("strength"),
+    paper: str("paper"),
+    grain: num("grain"),
+    night: flag("night"),
+    workerUrl: URL.createObjectURL(new Blob([document.scripts[0].textContent], { type: "text/javascript" })),
+  };
+  // page colour behind the tiles while the first ones are built: the paper (inverted at night)
+  const pc = parseInt((opts.paper || ShanShui.DEFAULTS.paper).slice(1), 16);
+  const night = opts.night ?? ShanShui.DEFAULTS.night;
+  document.body.style.background = "#" + (night ? 0xffffff - pc : pc).toString(16).padStart(6, "0");
+  window.scroller = ShanShui.startScroller(document.getElementById("bg"), opts);
+</script>
+</body>
+</html>
