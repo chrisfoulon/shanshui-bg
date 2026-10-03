@@ -1,5 +1,12 @@
 {
   "name": "shanshui-bg",
+  "version": "0.1.0",
+  "description": "An endless {Shan, Shui}* ink landscape scrolling slowly, as a KDE Plasma wallpaper or a website background",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chrisfoulon/shanshui-bg"
+  },
   "private": true,
   "type": "module",
   "scripts": {

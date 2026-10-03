@@ -16,6 +16,6 @@ Kirigami.FormLayout {
     QQC2.Label {
         Layout.fillWidth: true
         wrapMode: Text.Wrap
-        text: "Open the demo (bench/serve.mjs, then http://127.0.0.1:8765/demo/), tune it in the panel (P), and paste the link here. Remove seed= for a new landscape on each login."
+        text: "Tune the look in the demo (see the README: node bench/serve.mjs, then http://127.0.0.1:8765/demo/), open its panel with P, copy the link and paste it here. Remove seed= for a new landscape on each login."
     }
 }

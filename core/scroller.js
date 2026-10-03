@@ -10,8 +10,8 @@ import { createWorld } from "./shanshui.js";
 
 const OVERLAP = 2; // CSS px each tile extends under the next, hides subpixel hairlines at joins
 
-// Chris's chosen look and motion (2026-10-03). Every option falls back to these; the demo panel
-// reads them too. UPSTREAM_STYLE gives the original {Shan, Shui}* ink and paper back.
+// The default look and motion. Every option falls back to these; the demo panel reads them too.
+// UPSTREAM_STYLE gives the original {Shan, Shui}* ink and paper back.
 export const DEFAULTS = {
   speed: 20, // CSS px/s; below ~20 thin lines visibly pulse (see STATUS.md)
   zoom: 1.5,
