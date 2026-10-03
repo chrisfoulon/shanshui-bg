@@ -1,0 +1,259 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shan Shui Scroll</title>
+<!--
+  Full-screen test page for core/scroller.js. Serve the repo root (node bench/serve.mjs) and open
+  http://127.0.0.1:8765/demo/   Press P (or the ⚙ button) for the settings panel.
+  Every setting is also a URL parameter, so a combination can be bookmarked or shared:
+    speed (CSS px/s), zoom, drift (vertical px/s, 0 = off), turn (mean s between direction changes), soften (filter passes), ss (raster ×),
+    motion (smooth | step | timer), fps (step/timer update rate, 0 = one device px per step),
+    subpixel=1, still=1, seed, debug=1 (stall/tile HUD), panel=1 (open the panel on load),
+    report=1 (used by bench/cpu.sh), tab=motion|style (panel tab).
+    Style: ink (#hex), strength, paper (#hex), grain, night=1.
+  Landscape generator by Lingdong Huang, {Shan, Shui}* (MIT), https://github.com/LingDong-/shan-shui-inf
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #f2e6d0; }
+  #bg { position: fixed; inset: 0; }
+  #hud { position: fixed; left: 8px; bottom: 8px; font: 12px/1.4 monospace; color: #333;
+         background: rgba(255,255,255,0.75); padding: 6px 8px; white-space: pre; display: none; }
+  #credit { position: fixed; right: 8px; bottom: 6px; font: 11px sans-serif; color: #776; }
+  #credit a { color: inherit; }
+  #gear { position: fixed; left: 8px; top: 8px; font: 18px sans-serif; background: rgba(255,255,255,0.6);
+          border: 1px solid #bba; border-radius: 4px; cursor: pointer; padding: 2px 7px; color: #554; }
+  #panel { position: fixed; left: 8px; top: 44px; width: 300px; max-height: calc(100% - 60px); overflow: auto;
+           font: 13px/1.35 sans-serif; color: #332; background: rgba(250,246,236,0.95);
+           border: 1px solid #bba; border-radius: 6px; padding: 10px 12px; display: none;
+           box-shadow: 0 2px 10px rgba(0,0,0,0.15); }
+  #panel.open { display: block; }
+  #panel h3 { margin: 0 0 6px; font-size: 14px; }
+  .row { margin: 8px 0; }
+  .row label { display: flex; justify-content: space-between; gap: 8px; }
+  .row input[type=range] { width: 100%; }
+  .row .help { font-size: 11px; color: #776; margin-top: 1px; }
+  .row.off { opacity: 0.45; }
+  .val { font-variant-numeric: tabular-nums; font-weight: 600; }
+  #presets button { margin: 2px 2px 0 0; font-size: 12px; }
+  #tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+  #tabs button { flex: 1; padding: 4px; font-size: 13px; border: 1px solid #bba; background: #eee8da; border-radius: 4px; cursor: pointer; }
+  #tabs button.on { background: #fff; font-weight: 600; }
+  #link { width: 100%; font-size: 11px; margin-top: 4px; box-sizing: border-box; }
+</style>
+<div id="bg"></div>
+<div id="hud"></div>
+<button id="gear" title="Settings (P)">⚙</button>
+<div id="panel"></div>
+<div id="credit">Landscape: <a href="https://github.com/LingDong-/shan-shui-inf">{Shan, Shui}*</a> by Lingdong Huang</div>
+<script type="module">
+  import { startScroller, DEFAULTS as D } from "../core/scroller.js";
+
+  // [key, label, kind, default, extra, help, tab]. Values live in the URL; the panel only edits the URL.
+  const MOTION_FIELDS = [
+    ["speed", "Speed (screen px/s)", "range", D.speed, [1, 60, 1],
+      "The pulse rate follows this: below ~20 the eye can see each pixel step."],
+    ["zoom", "Zoom", "range", D.zoom, [1, 3, 0.25],
+      "Tiles drawn this × screen height. Thicker strokes; raise speed by the same factor for the same pace."],
+    ["drift", "Vertical drift (px/s)", "range", D.drift, [0, 30, 1],
+      "Steady up/down movement over the zoomed part. 0 = off. Needs zoom > 1."],
+    ["turn", "Direction change every (s, average)", "range", D.turn, [5, 120, 5],
+      "Each run lasts a random 0.5–1.5 × this, or until the top/bottom is reached."],
+    ["soften", "Soften (filter passes)", "range", D.soften, [0, 3, 1],
+      "Horizontal filter against the sharp/blurred pulse. 2 ≈ best; costs sharpness."],
+    ["ss", "Supersample (raster ×)", "range", D.supersample, [1, 3, 1],
+      "Draw tiles at N× resolution, screen scales down. Memory ×N². 2 + soften 1 tested best."],
+    ["motion", "Motion", "select", D.motion, ["smooth", "step", "timer"],
+      "smooth: 60 fps. step: fewer updates (cheaper CPU). timer: like step, from the main thread."],
+    ["fps", "Step rate (fps)", "range", 0, [0, 60, 1],
+      "For step/timer: updates per second. 0 = one device pixel per step."],
+    ["subpixel", "Subpixel rotation trick", "check", false, null,
+      "Tiny rotation against pixel snapping. Measured: no effect in Chromium."],
+    ["still", "Still (no movement)", "check", false, null, "What prefers-reduced-motion gets."],
+    ["seed", "Seed", "text", "", null, "Same seed = same landscape, for fair comparisons."],
+    ["debug", "Debug HUD", "check", false, null, "Tile build times and main-thread stalls."],
+  ];
+  const STYLE_FIELDS = [
+    ["ink", "Ink colour", "color", D.ink, null,
+      "What the black of the drawing becomes. Black = the original grey ink, untouched."],
+    ["strength", "Ink strength", "range", D.inkStrength, [0.3, 2, 0.1], "1 = original. Lower = fainter, higher = darker."],
+    ["paper", "Paper colour", "color", D.paper, null, "Mean tone of the paper (original ≈ #f0e4cc)."],
+    ["grain", "Paper grain", "range", D.grain, [0, 3, 0.25], "Texture amount. 0 = flat colour, 1 = original."],
+    ["night", "Night (invert)", "check", false, null, "Dark paper, light ink."],
+  ];
+  const FIELDS = [...MOTION_FIELDS.map((f) => [...f, "motion"]), ...STYLE_FIELDS.map((f) => [...f, "style"])];
+  const PRESETS = {
+    "Default": {},
+    "Plain (zoom 1 @ 12)": { zoom: 1, speed: 12 },
+    "Soften 2": { soften: 2 },
+    "SS 2 + soften 1": { ss: 2, soften: 1 },
+    "Zoom 2 @ 24": { zoom: 2, speed: 24 },
+    "Zoom 2 @ 24 + soften 1": { zoom: 2, speed: 24, soften: 1 },
+    "Step (cheap)": { motion: "step" },
+  };
+  const PALETTES = {
+    "Default": {},
+    "Original (upstream)": { ink: "#000000", strength: 1, paper: "#f0e4cc", grain: 1 },
+    "Sepia": { ink: "#5a3a1a", paper: "#f2e2c4" },
+    "Indigo": { ink: "#1d2a5a", paper: "#ecebe4" },
+    "Celadon": { ink: "#1f4a40", paper: "#e8ede4" },
+    "Vermilion": { ink: "#7a1f12", paper: "#f3e6d3" },
+    "Faded": { strength: 0.6, grain: 0.6 },
+    "Bold": { strength: 1.6 },
+    "Smooth paper": { grain: 0 },
+    "Night": { night: 1 },
+    "Night indigo": { night: 1, ink: "#1d2a5a" },
+  };
+
+  const q = new URLSearchParams(location.search);
+  if (!q.get("seed")) q.set("seed", String(Math.floor(Math.random() * 1e9))); // keep it across restarts
+  const get = (k) => {
+    const f = FIELDS.find((f) => f[0] == k);
+    if (!q.has(k)) return f ? f[3] : null;
+    const v = q.get(k);
+    return f && f[2] == "check" ? v == "1" : f && f[2] == "range" ? +v : v;
+  };
+  const writeUrl = () => history.replaceState(null, "", "?" + q.toString());
+  writeUrl();
+
+  // ---- scroller (re)start ----
+  const hud = document.getElementById("hud");
+  const log = [];
+  let s = null;
+  function start() {
+    if (s) s.stop();
+    log.length = 0;
+    s = startScroller(document.getElementById("bg"), {
+      seed: get("seed"),
+      speed: get("speed"),
+      still: q.has("still") ? get("still") : undefined, // unset: follow prefers-reduced-motion
+      motion: get("motion"),
+      fps: get("fps") || undefined,
+      subpixel: get("subpixel"),
+      soften: get("soften"),
+      supersample: get("ss"),
+      zoom: get("zoom"),
+      drift: get("drift"),
+      turn: get("turn"),
+      ink: get("ink") == "#000000" ? null : get("ink"),
+      inkStrength: get("strength"),
+      paper: get("paper"),
+      grain: get("grain"),
+      night: get("night"),
+      onStat(st) {
+        log.push(JSON.stringify(st));
+        if (log.length > 8) log.shift();
+        if (get("debug")) console.log(JSON.stringify(st));
+        if (st.late !== undefined) console.warn("tile arrived late", st);
+      },
+    });
+    window.scroller = s;
+    // page colour behind the tiles while they are built: the paper (inverted at night)
+    const pc = parseInt(get("paper").slice(1), 16);
+    document.body.style.background = "#" + (get("night") ? 0xffffff - pc : pc).toString(16).padStart(6, "0");
+  }
+  start();
+
+  // ---- debug HUD ----
+  let stall = 0, worstStall = 0, last = performance.now();
+  const frame = () => { const n = performance.now(); stall = Math.max(stall, n - last); last = n; requestAnimationFrame(frame); };
+  setInterval(() => {
+    const on = get("debug");
+    hud.style.display = on ? "block" : "none";
+    if (on) {
+      worstStall = Math.max(worstStall, stall);
+      hud.textContent = `seed ${s.seed}   main-thread stall (1 s / worst): ${Math.round(stall)} / ${Math.round(worstStall)} ms\n` + log.join("\n");
+    }
+    stall = 0;
+  }, 1000);
+  requestAnimationFrame(frame);
+
+  // ---- settings panel ----
+  const panel = document.getElementById("panel");
+  const RESTART_FREE = new Set(["debug"]); // everything else needs fresh tiles
+  function renderPanel() {
+    const tab = q.get("tab") || "motion";
+    panel.innerHTML = `<div id=tabs><button data-t=motion>Motion</button><button data-t=style>Style</button></div><div id=presets></div>`;
+    for (const b of panel.querySelectorAll("#tabs button")) {
+      if (b.dataset.t == tab) b.className = "on";
+      b.onclick = () => { q.set("tab", b.dataset.t); apply(false); };
+    }
+    const pre = panel.querySelector("#presets");
+    for (const [name, vals] of Object.entries(tab == "style" ? PALETTES : PRESETS)) {
+      const b = document.createElement("button");
+      b.textContent = name;
+      b.onclick = () => { // a preset resets only its own tab's settings
+        for (const f of FIELDS) if (f[6] == tab && !["seed", "debug"].includes(f[0])) q.delete(f[0]);
+        for (const [k, v] of Object.entries(vals)) q.set(k, String(v));
+        apply(true);
+      };
+      pre.appendChild(b);
+    }
+    for (const [key, label, kind, def, extra, help, t] of FIELDS) {
+      if (t != tab) continue;
+      const row = document.createElement("div");
+      row.className = "row";
+      const v = get(key);
+      let input;
+      if (kind == "range") {
+        input = Object.assign(document.createElement("input"), { type: "range", min: extra[0], max: extra[1], step: extra[2], value: v });
+      } else if (kind == "select") {
+        input = document.createElement("select");
+        for (const o of extra) input.add(new Option(o, o, false, o == v));
+      } else if (kind == "color") {
+        input = Object.assign(document.createElement("input"), { type: "color", value: v });
+      } else if (kind == "check") {
+        input = Object.assign(document.createElement("input"), { type: "checkbox", checked: v });
+      } else {
+        input = Object.assign(document.createElement("input"), { type: "text", value: v, size: 12 });
+      }
+      const shown = kind == "range" ? `<span class=val>${key == "fps" && !v ? "auto" : v}</span>` : "";
+      row.innerHTML = `<label><span>${label}</span>${shown}</label>`;
+      if (kind == "check") row.querySelector("label").prepend(input);
+      else row.appendChild(input);
+      row.insertAdjacentHTML("beforeend", `<div class=help>${help}</div>`);
+      if ((key == "drift" || key == "turn") && get("zoom") <= 1) row.classList.add("off");
+      if (key == "fps" && get("motion") == "smooth") row.classList.add("off");
+      if (kind == "range") input.oninput = () => (row.querySelector(".val").textContent = key == "fps" && input.value == 0 ? "auto" : input.value);
+      input.onchange = () => {
+        const nv = kind == "check" ? (input.checked ? "1" : "0") : input.value;
+        if (String(nv) == String(def) && key != "seed") q.delete(key);
+        else q.set(key, nv);
+        apply(!RESTART_FREE.has(key));
+      };
+      panel.appendChild(row);
+    }
+    panel.insertAdjacentHTML("beforeend", `<div class=row><label><span>Link to these settings</span></label><input id=link readonly value="${location.href}"></div>`);
+    panel.querySelector("#link").onclick = (e) => e.target.select();
+  }
+  function apply(restart) {
+    q.set("panel", "1");
+    writeUrl();
+    if (restart) start();
+    renderPanel();
+  }
+  const toggle = () => {
+    panel.classList.toggle("open");
+    if (panel.classList.contains("open")) q.set("panel", "1"); else q.delete("panel");
+    writeUrl();
+  };
+  document.getElementById("gear").onclick = toggle;
+  addEventListener("keydown", (e) => {
+    if ((e.key == "p" || e.key == "P") && !(e.target instanceof HTMLInputElement)) toggle();
+  });
+  renderPanel();
+  if (get("panel") == "1") panel.classList.add("open");
+
+  // report=1 (used by bench/cpu.sh): every 5 s, post visibility and the rAF frame rate to serve.mjs,
+  // so a measurement taken while the page was hidden or throttled can be told apart.
+  if (q.get("report") == "1") {
+    let frames = 0;
+    const count = () => { frames++; requestAnimationFrame(count); };
+    requestAnimationFrame(count);
+    setInterval(() => {
+      fetch("/result", { method: "POST", body: JSON.stringify({
+        t: Math.round(performance.now() / 1000), vis: document.visibilityState, fps: frames / 5,
+      }) });
+      frames = 0;
+    }, 5000);
+  }
+</script>

@@ -1,0 +1,92 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Raster bench</title>
+<!--
+  Times SVG string -> bitmap for screen-wide tiles cut from one world.
+  Query params: seed, w, h (screen px), tiles, margin (world units), post (1 = send results to serve.mjs).
+  Open by hand in any browser: http://127.0.0.1:8765/bench/raster.html
+-->
+<style>body { font: 13px monospace; background: #fff; } canvas { display: block; max-width: 100%; }</style>
+<pre id="out"></pre>
+<canvas id="c"></canvas>
+<script type="module">
+import { createWorld } from "../core/shanshui.js";
+
+const q = new URLSearchParams(location.search);
+const seed = q.get("seed") || "bench";
+const W = +(q.get("w") || 1920), H = +(q.get("h") || 1080);
+const tiles = +(q.get("tiles") || 8);
+const margin = +(q.get("margin") || 1600);
+const post = q.get("post") == "1";
+
+const scale = H / 800;              // world height is 800 units
+const tw = W / scale;               // tile width in world units
+const out = document.getElementById("out");
+const canvas = document.getElementById("c");
+canvas.width = W; canvas.height = H;
+const ctx = canvas.getContext("2d", { willReadFrequently: false });
+
+const send = (o) => {
+  out.textContent += JSON.stringify(o) + "\n";
+  if (post) return fetch("/result", { method: "POST", body: JSON.stringify(o) });
+};
+const t = () => performance.now();
+
+// Longest gap between animation frames since the last reset = how long the main thread stalled.
+let lastFrame = t(), maxGap = 0;
+const frame = () => { const n = t(); maxGap = Math.max(maxGap, n - lastFrame); lastFrame = n; requestAnimationFrame(frame); };
+requestAnimationFrame(frame);
+const gapSince = () => { const g = Math.max(maxGap, t() - lastFrame); maxGap = 0; return Math.round(g); };
+const idle = () => new Promise((r) => setTimeout(r, 200)); // let frames settle between steps
+
+await send({ ua: navigator.userAgent, seed, W, H, tw: +tw.toFixed(1), margin, tiles });
+
+const world = createWorld(seed);
+let genTo = 0;
+const ensure = (x) => { // forward-only, in upstream-sized steps
+  while (genTo < x) { world.load(genTo, genTo + 512); genTo += 512; }
+};
+
+for (let i = 0; i < tiles; i++) {
+  const x0 = i * tw, x1 = x0 + tw;
+  const r = { tile: i, x0: Math.round(x0) };
+
+  let s = t(); ensure(x1 + 1300); r.gen = t() - s;
+
+  s = t();
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${W}' height='${H}' ` +
+    `viewBox='${x0} 0 ${tw} 800'>` + world.render(x0, x1, margin) + "</svg>";
+  r.str = t() - s;
+  r.mb = +(svg.length / 1e6).toFixed(2);
+
+  await idle(); gapSince();
+  s = t();
+  const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+  const img = new Image();
+  img.src = url;
+  await img.decode();
+  r.decode = t() - s;
+  r.decodeGap = gapSince();
+
+  await idle(); gapSince();
+  s = t();
+  ctx.clearRect(0, 0, W, H);
+  ctx.drawImage(img, 0, 0);
+  ctx.getImageData(0, 0, 1, 1); // force the raster to finish
+  r.draw = t() - s;
+  await new Promise(requestAnimationFrame);
+  r.drawGap = gapSince();
+
+  s = t();
+  const bmp = await createImageBitmap(img);
+  r.bitmap = t() - s;
+  bmp.close();
+
+  URL.revokeObjectURL(url);
+  world.prune(x0, margin);
+  r.chunks = world.mem.chunks.length;
+  for (const k of ["gen", "str", "decode", "draw", "bitmap"]) r[k] = Math.round(r[k]);
+  await send(r);
+}
+await send({ done: true });
+</script>
