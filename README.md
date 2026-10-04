@@ -31,8 +31,9 @@ This is an unofficial project, not affiliated with Lingdong Huang.
 
 ## KDE Plasma wallpaper
 
-Tested on **Plasma 5.27 (X11)**. Plasma 6 isn't supported yet (it needs a Qt 6 port of the small QML
-part); help testing a port is welcome.
+Tested on **Plasma 5.27 (X11)**. It won't work on Plasma 6 as is: the installer uses `kpackagetool5`,
+and the package uses the Plasma 5 wallpaper format. A port should only need the small QML part to
+change; it's untested, and help is welcome.
 
 Requirements: Node.js (to build), `kpackagetool5`, and the QtWebEngine QML module for Qt 5 (on
 Debian/Ubuntu: `qml-module-qtwebengine`).
