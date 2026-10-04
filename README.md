@@ -5,7 +5,11 @@ wallpaper** or as a **website background**.
 
 ![A landscape of ink mountains, pines and huts on warm paper](docs/preview.jpg)
 
-[10-second recording of the wallpaper (MP4)](docs/demo.mp4)
+
+
+https://github.com/user-attachments/assets/edd8e97f-22ae-4e33-ad2f-fb69a2f01681
+
+
 
 **The landscape is [{Shan, Shui}\*](https://github.com/LingDong-/shan-shui-inf) by
 [Lingdong Huang](https://github.com/LingDong-)** (MIT, 2018): a procedurally generated, infinitely
